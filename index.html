@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Captura QR, Datos y Fotos</title>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 1rem; max-width: 600px; margin: 0 auto; padding-bottom: 5rem; }
+    header { margin-bottom: 1.5rem; text-align: center; }
+    h1 { font-size: 1.5rem; color: var(--primary); margin-bottom: 0.25rem; }
+    p.subtitle { font-size: 0.875rem; color: var(--text-muted); }
+    .card { background: var(--card-bg); border-radius: 12px; padding: 1.25rem; border: 1px solid var(--border); margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+    .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
+    .form-group { margin-bottom: 1rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.4rem; }
+    input[type="text"], textarea { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.95rem; background: #fff; }
+    textarea { resize: vertical; min-height: 70px; }
+    .input-with-btn { display: flex; gap: 0.5rem; }
+    .input-with-btn input { flex: 1; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1rem; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; gap: 0.5rem; transition: background 0.2s; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-success { background: var(--success); color: white; width: 100%; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-sm { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+    .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+    .photo-box { border: 2px dashed var(--border); border-radius: 8px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; background: #fafafa; cursor: pointer; }
+    .photo-box img { width: 100%; height: 100%; object-fit: cover; }
+    .photo-box input[type="file"] { display: none; }
+    .photo-box span { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-top: 0.25rem; }
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center; padding: 1rem; }
+    .modal-content { background: #fff; border-radius: 12px; width: 100%; max-width: 500px; padding: 1rem; }
+    #reader { width: 100%; }
+    .record-item { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; font-size: 0.875rem; }
+    .record-header { font-weight: 600; color: var(--primary); display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
+    details { margin-top: 1rem; background: #fff; border-radius: 8px; border: 1px solid var(--border); padding: 0.5rem 1rem; }
+    summary { font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Captura de Datos</h1>
+    <p class="subtitle">Hoja de destino + QR + Textos + Fotos</p>
+  </header>
+
+  <details class="card" style="margin-bottom: 1rem;">
+    <summary>⚙️ Configuración (Google Sheets)</summary>
+    <div style="margin-top: 0.75rem;">
+      <label>URL del servicio de Google (se pega una sola vez):</label>
+      <input type="text" id="webhookUrl" placeholder="https://script.google.com/macros/s/.../exec" onchange="saveWebhookUrl(this.value)">
+      <p style="font-size:0.75rem; color: var(--text-muted); margin-top: 0.25rem;">Cada registro se guarda solo en Google Sheets, con las fotos en Google Drive.</p>
+    </div>
+  </details>
+
+  <form id="dataForm" onsubmit="handleSave(event)">
+    <div class="card" style="border-color: var(--primary); background: #f0f7ff;">
+      <div class="card-title" style="color: var(--primary);">📄 Hoja de destino</div>
+      <div class="form-group" style="margin-bottom: 0;">
+        <label>Nombre de la Hoja / Pestaña</label>
+        <input type="text" id="tablaDestino" placeholder="Ej. Hoja1, TurnoMañana, Linea2" required value="Hoja1">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">1. Códigos QR / Barras</div>
+      
+      <div class="form-group">
+        <label>CODIGO</label>
+        <div class="input-with-btn">
+          <input type="text" id="codigo" required>
+          <button type="button" class="btn btn-outline btn-sm" onclick="startScan('codigo')">📷 Escanear</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>CLIENTE</label>
+        <div class="input-with-btn">
+          <input type="text" id="cliente" required>
+          <button type="button" class="btn btn-outline btn-sm" onclick="startScan('cliente')">📷 Escanear</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>ARTICULO</label>
+        <div class="input-with-btn">
+          <input type="text" id="articulo" required>
+          <button type="button" class="btn btn-outline btn-sm" onclick="startScan('articulo')">📷 Escanear</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">2. Información de Texto</div>
+      
+      <div class="form-group">
+        <label>DESCRIPCION</label>
+        <input type="text" id="descripcion">
+      </div>
+
+      <div class="form-group">
+        <label>OBSERVACIONES</label>
+        <textarea id="observaciones"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>PROGRAMA</label>
+        <input type="text" id="programa">
+      </div>
+
+      <div class="form-group">
+        <label>HERRAMIENTA</label>
+        <input type="text" id="herramienta">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">3. Fotografía de Capturas</div>
+      <div class="photo-grid">
+        <div class="photo-box" onclick="triggerPhoto('img2')">
+          <img id="prev_img2" style="display:none;">
+          <span id="label_img2">IMG2</span>
+          <input type="file" id="img2" accept="image/*" capture="environment" onchange="previewPhoto(this, 'img2')">
+        </div>
+        <div class="photo-box" onclick="triggerPhoto('img3')">
+          <img id="prev_img3" style="display:none;">
+          <span id="label_img3">IMG3</span>
+          <input type="file" id="img3" accept="image/*" capture="environment" onchange="previewPhoto(this, 'img3')">
+        </div>
+        <div class="photo-box" onclick="triggerPhoto('img4')">
+          <img id="prev_img4" style="display:none;">
+          <span id="label_img4">IMG4</span>
+          <input type="file" id="img4" accept="image/*" capture="environment" onchange="previewPhoto(this, 'img4')">
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-success" style="font-size: 1.1rem; padding: 1rem; margin-bottom: 1.5rem;">💾 GUARDAR REGISTRO</button>
+  </form>
+
+  <div class="card">
+    <div class="card-title">
+      <span>Pendientes de enviar (<span id="count">0</span>)<br><small style="font-weight:400;color:var(--text-muted);">Enviados a Google Sheets: <span id="sentCount">0</span></small></span>
+      <button class="btn btn-outline btn-sm" onclick="sendPending()">☁️ Reenviar pendientes</button>
+      <button class="btn btn-outline btn-sm" onclick="exportToExcel()" style="color: var(--success); border-color: var(--success);">📊 Descargar Excel</button>
+    </div>
+    <div id="recordsList"></div>
+  </div>
+
+  <div id="scannerModal" class="modal">
+    <div class="modal-content">
+      <div id="reader"></div>
+      <button class="btn btn-outline" style="width:100%; margin-top:1rem;" onclick="stopScan()">Cerrar Escáner</button>
+    </div>
+  </div>
+
+  <script>
+    let html5QrcodeScanner = null;
+    let activeTargetInput = null;
+    let records = JSON.parse(localStorage.getItem('app_records') || '[]');
+    let imagesData = { img2: '', img3: '', img4: '' };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById('webhookUrl').value = localStorage.getItem('webhook_url') || '';
+      renderRecords();
+    });
+
+    function saveWebhookUrl(val) {
+      localStorage.setItem('webhook_url', val.trim());
+    }
+
+    function startScan(targetId) {
+      activeTargetInput = targetId;
+      document.getElementById('scannerModal').style.display = 'flex';
+      html5QrcodeScanner = new Html5Qrcode("reader");
+      html5QrcodeScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          document.getElementById(activeTargetInput).value = decodedText;
+          stopScan();
+        },
+        () => {}
+      );
+    }
+
+    function stopScan() {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.stop().then(() => {
+          document.getElementById('scannerModal').style.display = 'none';
+        });
+      } else {
+        document.getElementById('scannerModal').style.display = 'none';
+      }
+    }
+
+    function triggerPhoto(id) {
+      document.getElementById(id).click();
+    }
+
+    function compressImage(file, maxSize, quality) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const im = new Image();
+        im.onload = () => {
+          const k = Math.min(1, maxSize / Math.max(im.width, im.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          URL.revokeObjectURL(url);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        im.onerror = reject;
+        im.src = url;
+      });
+    }
+
+    function previewPhoto(input, id) {
+      if (input.files && input.files[0]) {
+        compressImage(input.files[0], 1000, 0.7).then(dataUrl => {
+          imagesData[id] = dataUrl;
+          const img = document.getElementById('prev_' + id);
+          img.src = dataUrl;
+          img.style.display = 'block';
+          document.getElementById('label_' + id).style.display = 'none';
+        });
+      }
+    }
+
+    async function sendRecord(r) {
+      const url = localStorage.getItem('webhook_url');
+      if (!url) return false;
+      try {
+        // text/plain + no-cors evita el bloqueo CORS de Power Automate
+        await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(r) });
+        return true;
+      } catch (err) {
+        console.error('Error al enviar a la nube:', err);
+        return false;
+      }
+    }
+
+    function addSent(n) {
+      try { localStorage.setItem('sent_count', String((parseInt(localStorage.getItem('sent_count') || '0', 10) || 0) + n)); } catch (e) {}
+    }
+
+    function persist() {
+      try { localStorage.setItem('app_records', JSON.stringify(records)); }
+      catch (e) { alert('Almacenamiento local lleno. Envía los pendientes.'); }
+    }
+
+    async function sendPending() {
+      let n = 0;
+      const quedan = [];
+      for (const r of records) {
+        if (await sendRecord(r)) { n++; } else { quedan.push(r); }
+      }
+      records = quedan;
+      addSent(n);
+      persist(); renderRecords();
+      alert(n + ' registro(s) enviado(s) a Google Sheets.' + (quedan.length ? '\nSin enviar todavía: ' + quedan.length : ''));
+    }
+
+    async function handleSave(e) {
+      e.preventDefault();
+      const record = {
+        timestamp: new Date().toLocaleString(),
+        hojaDestino: document.getElementById('tablaDestino').value.trim() || 'Hoja1',
+        codigo: document.getElementById('codigo').value,
+        cliente: document.getElementById('cliente').value,
+        articulo: document.getElementById('articulo').value,
+        descripcion: document.getElementById('descripcion').value,
+        observaciones: document.getElementById('observaciones').value,
+        programa: document.getElementById('programa').value,
+        herramienta: document.getElementById('herramienta').value,
+        img2: imagesData.img2,
+        img3: imagesData.img3,
+        img4: imagesData.img4
+      };
+
+      record.id = Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+
+      const enviado = await sendRecord(record);
+      if (enviado) {
+        addSent(1);            // ya enviado: no se guarda en el dispositivo
+      } else {
+        records.push(record);  // sin conexión: se guarda para reenviarlo después
+        persist();
+      }
+
+      resetForm();
+      renderRecords();
+      alert(enviado ? '¡Registro enviado a Google Sheets!' : 'Sin conexión: registro guardado en el dispositivo. Pulsa "Reenviar pendientes" cuando tengas internet.');
+    }
+
+    function resetForm() {
+      const currentHoja = document.getElementById('tablaDestino').value;
+      document.getElementById('dataForm').reset();
+      document.getElementById('tablaDestino').value = currentHoja;
+      imagesData = { img2: '', img3: '', img4: '' };
+      ['img2', 'img3', 'img4'].forEach(id => {
+        document.getElementById('prev_' + id).style.display = 'none';
+        document.getElementById('label_' + id).style.display = 'block';
+      });
+    }
+
+    function renderRecords() {
+      document.getElementById('count').innerText = records.length;
+      document.getElementById('sentCount').innerText = localStorage.getItem('sent_count') || '0';
+      const list = document.getElementById('recordsList');
+      list.innerHTML = records.length === 0 ? '<div style="font-size:0.875rem;color:var(--text-muted);">No hay registros pendientes.</div>' : records.map((r, i) => `
+        <div class="record-item">
+          <div class="record-header">
+            <span>#${i + 1} [Hoja: ${r.hojaDestino}] - ${r.codigo} ⏳</span>
+            <small style="color:var(--text-muted);">${r.timestamp}</small>
+          </div>
+          <div><strong>Cliente:</strong> ${r.cliente} | <strong>Artículo:</strong> ${r.articulo}</div>
+          <div><strong>Desc:</strong> ${r.descripcion || '-'}</div>
+        </div>
+      `).reverse().join('');
+    }
+
+    function exportToExcel() {
+      if (records.length === 0) return alert('No hay registros guardados');
+      
+      const wb = XLSX.utils.book_new();
+      
+      // Agrupar registros por el nombre de la hoja destino
+      const hojasMap = {};
+      records.forEach(r => {
+        const hojaName = r.hojaDestino || 'Hoja1';
+        if (!hojasMap[hojaName]) hojasMap[hojaName] = [];
+        hojasMap[hojaName].push({
+          "FECHA": r.timestamp,
+          "CODIGO": r.codigo,
+          "CLIENTE": r.cliente,
+          "ARTICULO": r.articulo,
+          "DESCRIPCION": r.descripcion,
+          "OBSERVACIONES": r.observaciones,
+          "PROGRAMA": r.programa,
+          "HERRAMIENTA": r.herramienta,
+          "IMG2": r.img2 ? 'Foto Adjunta' : '',
+          "IMG3": r.img3 ? 'Foto Adjunta' : '',
+          "IMG4": r.img4 ? 'Foto Adjunta' : ''
+        });
+      });
+
+      // Crear una pestaña en el libro Excel por cada hoja distinta utilizada
+      for (const [hojaName, items] of Object.entries(hojasMap)) {
+        const ws = XLSX.utils.json_to_sheet(items);
+        XLSX.utils.book_append_sheet(wb, ws, hojaName.substring(0, 31)); // Excel limita nombres de hoja a 31 caracteres
+      }
+
+      XLSX.writeFile(wb, `Registros_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+  </script>
+</body>
+</html>
