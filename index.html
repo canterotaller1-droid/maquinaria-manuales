@@ -119,6 +119,7 @@
       <div class="form-group">
         <label>OBSERVACIONES</label>
         <textarea id="observaciones"></textarea>
+        <button type="button" id="btnVoz" class="btn btn-outline btn-sm" onclick="toggleVoz()" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
       </div>
 
       <div class="form-group">
@@ -356,6 +357,59 @@
       if (manual) alert(ok ? 'Lista de hojas actualizada.' : (url ? 'No se pudo actualizar la lista (sin conexión o dirección incorrecta). Se muestran las hojas guardadas.' : 'Primero pega la dirección del servicio de Google en Configuración.'));
     }
 
+    let reconocimiento = null;
+    let grabando = false;
+    let textoBase = '';
+
+    function pintarBotonVoz() {
+      const b = document.getElementById('btnVoz');
+      b.textContent = grabando ? '⏹️ Detener dictado' : '🎤 Dictar con la voz';
+      b.style.color = grabando ? '#dc2626' : '';
+      b.style.borderColor = grabando ? '#dc2626' : '';
+    }
+
+    function detenerVoz() {
+      grabando = false;
+      if (reconocimiento) { try { reconocimiento.stop(); } catch (e) {} }
+      pintarBotonVoz();
+    }
+
+    function toggleVoz() {
+      if (grabando) { detenerVoz(); return; }
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { alert('Este navegador no permite dictar por voz. Usa Chrome en el móvil.'); return; }
+      const ta = document.getElementById('observaciones');
+      const sinFinal = s => s.replace(/\s+$/, '');
+      textoBase = ta.value ? sinFinal(ta.value) + ' ' : '';
+      reconocimiento = new SR();
+      reconocimiento.lang = 'es-ES';
+      reconocimiento.interimResults = true;
+      reconocimiento.continuous = false;
+      reconocimiento.onresult = (e) => {
+        let t = '';
+        for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+        ta.value = textoBase + t;
+      };
+      reconocimiento.onerror = (e) => {
+        if (e.error === 'no-speech' || e.error === 'aborted') return;
+        grabando = false;
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') alert('Permite el uso del micrófono para dictar (candado junto a la dirección → Permisos).');
+        else if (e.error === 'network') alert('El dictado necesita conexión a internet.');
+        else alert('No se pudo dictar (' + e.error + ').');
+        pintarBotonVoz();
+      };
+      reconocimiento.onend = () => {
+        if (grabando) {
+          textoBase = ta.value ? sinFinal(ta.value) + ' ' : '';
+          try { reconocimiento.start(); } catch (e) { grabando = false; }
+        }
+        pintarBotonVoz();
+      };
+      grabando = true;
+      pintarBotonVoz();
+      try { reconocimiento.start(); } catch (e) { grabando = false; pintarBotonVoz(); }
+    }
+
     function addSent(n) {
       try { localStorage.setItem('sent_count', String((parseInt(localStorage.getItem('sent_count') || '0', 10) || 0) + n)); } catch (e) {}
     }
@@ -379,6 +433,7 @@
 
     async function handleSave(e) {
       e.preventDefault();
+      detenerVoz();
       if (document.getElementById('hojaSelect').value === '__nueva__' && !document.getElementById('tablaDestino').value.trim()) {
         alert('Escribe el nombre de la hoja nueva.');
         return;
