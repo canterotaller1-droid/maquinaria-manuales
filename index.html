@@ -45,6 +45,8 @@
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center; padding: 1rem; }
     .modal-content { background: #fff; border-radius: 12px; width: 100%; max-width: 500px; padding: 1rem; }
     #reader { width: 100%; }
+    .ocr-w { position: absolute; border: 1.5px solid rgba(37,99,235,0.8); background: rgba(37,99,235,0.12); border-radius: 2px; cursor: pointer; padding: 0; }
+    .ocr-w.sel { background: rgba(34,197,94,0.5); border-color: #16a34a; }
     .record-item { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; font-size: 0.875rem; }
     .record-header { font-weight: 600; color: var(--primary); display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
     details { margin-top: 1rem; background: #fff; border-radius: 8px; border: 1px solid var(--border); padding: 0.5rem 1rem; }
@@ -172,10 +174,35 @@
   <input type="file" id="scanPhoto" accept="image/*" capture="environment" style="display:none" onchange="onScanPhoto(this)">
   <div id="fileReader" style="display:none"></div>
 
+  <input type="file" id="scanPhotoOcr" accept="image/*" capture="environment" style="display:none" onchange="onOcrPhoto(this)">
+
+  <div id="ocrModal" class="modal" style="align-items:flex-start; overflow:auto;">
+    <div class="modal-content" style="margin:auto;">
+      <div style="font-weight:600;">Toca en la foto las palabras que quieres usar</div>
+      <div id="ocrEstado" style="font-size:0.85rem; color:#475569; margin:0.4rem 0;"></div>
+      <div id="ocrCaja" style="overflow:auto; max-height:50vh; border:1px solid #cbd5e1; border-radius:8px; background:#f1f5f9;">
+        <div id="ocrLienzo" style="position:relative; width:100%;">
+          <img id="ocrImg" alt="" style="width:100%; display:block;">
+        </div>
+      </div>
+      <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="ocrZoom(-0.5)">🔍 −</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="ocrZoom(0.5)">🔍 +</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="ocrTodo()">Todo el texto</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="ocrLimpiar()">Borrar selección</button>
+      </div>
+      <label style="display:block; margin-top:0.75rem; font-size:0.85rem;">Texto que se pondrá en la celda (puedes corregirlo):</label>
+      <input type="text" id="ocrTexto" style="width:100%;">
+      <button type="button" class="btn btn-primary" style="width:100%; margin-top:0.75rem;" onclick="ocrUsar()">✅ Usar este texto</button>
+      <button type="button" class="btn btn-outline" style="width:100%; margin-top:0.5rem;" onclick="ocrCerrar()">Cancelar</button>
+    </div>
+  </div>
+
   <div id="scannerModal" class="modal">
     <div class="modal-content">
       <div id="reader"></div>
       <button class="btn btn-primary" style="width:100%; margin-top:1rem;" onclick="triggerScanPhoto()">📸 Hacer foto con la cámara del móvil (más resolución)</button>
+      <button class="btn btn-primary" style="width:100%; margin-top:0.5rem;" onclick="triggerOcrPhoto()">🔤 Leer texto (OCR) de una foto</button>
       <button class="btn btn-outline" style="width:100%; margin-top:0.5rem;" onclick="stopScan()">Cerrar Escáner</button>
     </div>
   </div>
@@ -256,8 +283,127 @@
         const t = await decodeFile(f);
         if (t) { document.getElementById(activeTargetInput).value = t; return; }
       } catch (e) { /* sin código */ }
-      alert('No se ha encontrado ningún código en la foto. Acércate un poco, enfoca bien y vuelve a intentarlo.');
+      if (confirm('No se ha encontrado ningún código en la foto.\n\n¿Quieres leer el texto de la foto (OCR) y elegir qué palabras poner en la celda?')) abrirOcr(f);
     }
+
+    // ---- Lectura de texto (OCR): se elige en la foto qué palabras poner en la celda ----
+    let ocrWorker = null;
+    let ocrPalabras = [];
+    let ocrSel = new Set();
+    let ocrAncho = 100;
+
+    function triggerOcrPhoto() {
+      document.getElementById('scanPhotoOcr').click();
+      stopScan();
+    }
+
+    function onOcrPhoto(input) {
+      const f = input.files && input.files[0];
+      input.value = '';
+      if (f && activeTargetInput) abrirOcr(f);
+    }
+
+    function cargarTesseract() {
+      return new Promise((resolve, reject) => {
+        if (window.Tesseract) return resolve();
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('sin conexión'));
+        document.head.appendChild(s);
+      });
+    }
+
+    function archivoACanvas(file, maxSize) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const im = new Image();
+        im.onload = () => {
+          const k = Math.min(1, maxSize / Math.max(im.width, im.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          URL.revokeObjectURL(url);
+          resolve(c);
+        };
+        im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('imagen no válida')); };
+        im.src = url;
+      });
+    }
+
+    function ocrEstado(t) { document.getElementById('ocrEstado').textContent = t; }
+
+    async function abrirOcr(file) {
+      document.getElementById('ocrModal').style.display = 'flex';
+      document.querySelectorAll('.ocr-w').forEach(e => e.remove());
+      ocrPalabras = []; ocrSel = new Set(); ocrAncho = 100; ocrAplicarZoom();
+      document.getElementById('ocrTexto').value = '';
+      ocrEstado('Preparando la foto…');
+      try {
+        const canvas = await archivoACanvas(file, 2200);
+        document.getElementById('ocrImg').src = canvas.toDataURL('image/jpeg', 0.85);
+        ocrEstado('Cargando el lector de texto (la primera vez tarda un poco y necesita internet)…');
+        await cargarTesseract();
+        if (!ocrWorker) {
+          ocrWorker = await Tesseract.createWorker('spa', 1, {
+            logger: m => { if (m.status === 'recognizing text') ocrEstado('Leyendo texto… ' + Math.round((m.progress || 0) * 100) + '%'); }
+          });
+          try { await ocrWorker.setParameters({ tessedit_pageseg_mode: '11' }); } catch (e) {}
+        }
+        ocrEstado('Leyendo texto…');
+        const res = await ocrWorker.recognize(canvas);
+        const palabras = (res.data.words || []).filter(w => w.text && w.text.trim() && w.confidence > 20);
+        ocrPalabras = palabras.map(w => ({ t: w.text.trim(), b: w.bbox, W: canvas.width, H: canvas.height }));
+        ocrPintar();
+        ocrEstado(ocrPalabras.length ? 'Toca las palabras (se marcan en verde). Con 🔍 + puedes ampliar la foto.' : 'No se ha reconocido texto. Cierra y haz otra foto más cerca y con buena luz.');
+      } catch (e) {
+        ocrEstado('No se pudo leer el texto: ' + (e && e.message ? e.message : e) + '. Comprueba la conexión a internet e inténtalo de nuevo.');
+      }
+    }
+
+    function ocrPintar() {
+      const lienzo = document.getElementById('ocrLienzo');
+      ocrPalabras.forEach((p, i) => {
+        const d = document.createElement('button');
+        d.type = 'button';
+        d.className = 'ocr-w';
+        d.title = p.t;
+        d.style.left = (p.b.x0 / p.W * 100) + '%';
+        d.style.top = (p.b.y0 / p.H * 100) + '%';
+        d.style.width = ((p.b.x1 - p.b.x0) / p.W * 100) + '%';
+        d.style.height = ((p.b.y1 - p.b.y0) / p.H * 100) + '%';
+        d.onclick = () => { if (ocrSel.has(i)) ocrSel.delete(i); else ocrSel.add(i); d.classList.toggle('sel', ocrSel.has(i)); ocrActualizarTexto(); };
+        lienzo.appendChild(d);
+      });
+    }
+
+    function ocrActualizarTexto() {
+      document.getElementById('ocrTexto').value = [...ocrSel].sort((a, b) => a - b).map(i => ocrPalabras[i].t).join(' ');
+    }
+
+    function ocrTodo() {
+      ocrSel = new Set(ocrPalabras.map((_, i) => i));
+      document.querySelectorAll('.ocr-w').forEach(e => e.classList.add('sel'));
+      ocrActualizarTexto();
+    }
+
+    function ocrLimpiar() {
+      ocrSel = new Set();
+      document.querySelectorAll('.ocr-w').forEach(e => e.classList.remove('sel'));
+      ocrActualizarTexto();
+    }
+
+    function ocrAplicarZoom() { document.getElementById('ocrLienzo').style.width = ocrAncho + '%'; }
+    function ocrZoom(d) { ocrAncho = Math.max(100, Math.min(400, ocrAncho + d * 100)); ocrAplicarZoom(); }
+
+    function ocrUsar() {
+      const t = document.getElementById('ocrTexto').value.trim();
+      if (!t) { alert('Toca primero en la foto las palabras que quieres usar.'); return; }
+      if (activeTargetInput) document.getElementById(activeTargetInput).value = t;
+      ocrCerrar();
+    }
+
+    function ocrCerrar() { document.getElementById('ocrModal').style.display = 'none'; }
 
     function triggerPhoto(id) {
       document.getElementById(id).click();
