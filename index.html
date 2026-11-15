@@ -31,6 +31,7 @@
     textarea { resize: vertical; min-height: 70px; }
     .input-with-btn { display: flex; gap: 0.5rem; }
     .input-with-btn input { flex: 1; }
+    select { flex: 1; width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.95rem; background: #fff; }
     .btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1rem; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; gap: 0.5rem; transition: background 0.2s; }
     .btn-primary { background: var(--primary); color: white; }
     .btn-success { background: var(--success); color: white; width: 100%; }
@@ -70,8 +71,12 @@
     <div class="card" style="border-color: var(--primary); background: #f0f7ff;">
       <div class="card-title" style="color: var(--primary);">📄 Hoja de destino</div>
       <div class="form-group" style="margin-bottom: 0;">
-        <label>Nombre de la Hoja / Pestaña</label>
-        <input type="text" id="tablaDestino" placeholder="Ej. Hoja1, TurnoMañana, Linea2" required value="Hoja1">
+        <label>Hoja / Pestaña</label>
+        <div class="input-with-btn">
+          <select id="hojaSelect" onchange="onHojaChange()"><option value="Hoja1">Hoja1</option></select>
+          <button type="button" class="btn btn-outline btn-sm" onclick="cargarHojas(true)" title="Actualizar la lista de hojas">🔄</button>
+        </div>
+        <input type="text" id="tablaDestino" placeholder="Escribe el nombre de la hoja nueva" style="display:none; margin-top:0.5rem;" value="Hoja1">
       </div>
     </div>
 
@@ -160,10 +165,14 @@
     <div id="recordsList"></div>
   </div>
 
+  <input type="file" id="scanPhoto" accept="image/*" capture="environment" style="display:none" onchange="onScanPhoto(this)">
+  <div id="fileReader" style="display:none"></div>
+
   <div id="scannerModal" class="modal">
     <div class="modal-content">
       <div id="reader"></div>
-      <button class="btn btn-outline" style="width:100%; margin-top:1rem;" onclick="stopScan()">Cerrar Escáner</button>
+      <button class="btn btn-primary" style="width:100%; margin-top:1rem;" onclick="triggerScanPhoto()">📸 Hacer foto con la cámara del móvil (más resolución)</button>
+      <button class="btn btn-outline" style="width:100%; margin-top:0.5rem;" onclick="stopScan()">Cerrar Escáner</button>
     </div>
   </div>
 
@@ -176,6 +185,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       document.getElementById('webhookUrl').value = localStorage.getItem('webhook_url') || '';
       renderRecords();
+      cargarHojas(false);
     });
 
     function saveWebhookUrl(val) {
@@ -185,26 +195,64 @@
     function startScan(targetId) {
       activeTargetInput = targetId;
       document.getElementById('scannerModal').style.display = 'flex';
-      html5QrcodeScanner = new Html5Qrcode("reader");
+      html5QrcodeScanner = new Html5Qrcode("reader", { experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
       html5QrcodeScanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
+        {
+          fps: 15,
+          qrbox: (w, h) => ({ width: Math.floor(w * 0.9), height: Math.floor(Math.min(h, w * 0.6)) }),
+          videoConstraints: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: "continuous" }] }
+        },
         (decodedText) => {
           document.getElementById(activeTargetInput).value = decodedText;
           stopScan();
         },
         () => {}
-      );
+      ).catch(err => {
+        alert('No se pudo abrir la cámara del escáner (' + err + ').\nUsa el botón "Hacer foto con la cámara del móvil".');
+      });
     }
 
     function stopScan() {
-      if (html5QrcodeScanner) {
-        html5QrcodeScanner.stop().then(() => {
-          document.getElementById('scannerModal').style.display = 'none';
-        });
+      const modal = document.getElementById('scannerModal');
+      const s = html5QrcodeScanner;
+      html5QrcodeScanner = null;
+      if (s) {
+        s.stop().catch(() => {}).then(() => { try { s.clear(); } catch (e) {} modal.style.display = 'none'; });
       } else {
-        document.getElementById('scannerModal').style.display = 'none';
+        modal.style.display = 'none';
       }
+    }
+
+    // Foto con la cámara normal del móvil (resolución completa) y lectura del código en la foto
+    function triggerScanPhoto() {
+      document.getElementById('scanPhoto').click();
+      stopScan();
+    }
+
+    async function decodeFile(file) {
+      if ('BarcodeDetector' in window) {
+        try {
+          const bd = new BarcodeDetector();
+          const bmp = await createImageBitmap(file);
+          const r = await bd.detect(bmp);
+          if (r.length) return r[0].rawValue;
+        } catch (e) { /* se prueba con la otra librería */ }
+      }
+      const tmp = new Html5Qrcode("fileReader", false);
+      try { return await tmp.scanFile(file, false); }
+      finally { try { tmp.clear(); } catch (e) {} }
+    }
+
+    async function onScanPhoto(input) {
+      const f = input.files && input.files[0];
+      input.value = '';
+      if (!f || !activeTargetInput) return;
+      try {
+        const t = await decodeFile(f);
+        if (t) { document.getElementById(activeTargetInput).value = t; return; }
+      } catch (e) { /* sin código */ }
+      alert('No se ha encontrado ningún código en la foto. Acércate un poco, enfoca bien y vuelve a intentarlo.');
     }
 
     function triggerPhoto(id) {
@@ -253,6 +301,61 @@
       }
     }
 
+    function leerHojas() {
+      try { return JSON.parse(localStorage.getItem('hojas_lista') || '[]'); } catch (e) { return []; }
+    }
+
+    function pintarHojas(lista, elegida) {
+      const sel = document.getElementById('hojaSelect');
+      const txt = document.getElementById('tablaDestino');
+      const act = elegida || localStorage.getItem('hoja_actual') || 'Hoja1';
+      if (lista.indexOf(act) < 0) lista = lista.concat([act]);
+      sel.innerHTML = '';
+      lista.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+      const nueva = document.createElement('option');
+      nueva.value = '__nueva__'; nueva.textContent = '➕ Nueva hoja…';
+      sel.appendChild(nueva);
+      sel.value = act;
+      txt.value = act;
+      txt.style.display = 'none';
+    }
+
+    function onHojaChange() {
+      const sel = document.getElementById('hojaSelect');
+      const txt = document.getElementById('tablaDestino');
+      if (sel.value === '__nueva__') {
+        txt.value = ''; txt.style.display = 'block'; txt.focus();
+      } else {
+        txt.value = sel.value; txt.style.display = 'none';
+        try { localStorage.setItem('hoja_actual', sel.value); } catch (e) {}
+      }
+    }
+
+    function recordarHoja(nombre) {
+      const l = leerHojas();
+      if (l.indexOf(nombre) < 0) l.push(nombre);
+      try { localStorage.setItem('hojas_lista', JSON.stringify(l)); localStorage.setItem('hoja_actual', nombre); } catch (e) {}
+      pintarHojas(l, nombre);
+    }
+
+    async function cargarHojas(manual) {
+      const url = localStorage.getItem('webhook_url');
+      let lista = leerHojas();
+      let ok = false;
+      if (url) {
+        try {
+          const r = await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + 'accion=hojas', { cache: 'no-store' });
+          const j = await r.json();
+          if (j && j.hojas && j.hojas.length) { lista = j.hojas; ok = true; }
+        } catch (e) { console.error('No se pudo leer la lista de hojas', e); }
+      }
+      records.forEach(r => { if (r.hojaDestino && lista.indexOf(r.hojaDestino) < 0) lista.push(r.hojaDestino); });
+      if (!lista.length) lista = ['Hoja1'];
+      try { localStorage.setItem('hojas_lista', JSON.stringify(lista)); } catch (e) {}
+      pintarHojas(lista);
+      if (manual) alert(ok ? 'Lista de hojas actualizada.' : (url ? 'No se pudo actualizar la lista (sin conexión o dirección incorrecta). Se muestran las hojas guardadas.' : 'Primero pega la dirección del servicio de Google en Configuración.'));
+    }
+
     function addSent(n) {
       try { localStorage.setItem('sent_count', String((parseInt(localStorage.getItem('sent_count') || '0', 10) || 0) + n)); } catch (e) {}
     }
@@ -276,6 +379,10 @@
 
     async function handleSave(e) {
       e.preventDefault();
+      if (document.getElementById('hojaSelect').value === '__nueva__' && !document.getElementById('tablaDestino').value.trim()) {
+        alert('Escribe el nombre de la hoja nueva.');
+        return;
+      }
       const record = {
         timestamp: new Date().toLocaleString(),
         hojaDestino: document.getElementById('tablaDestino').value.trim() || 'Hoja1',
@@ -301,6 +408,7 @@
         persist();
       }
 
+      recordarHoja(record.hojaDestino);
       resetForm();
       renderRecords();
       alert(enviado ? '¡Registro enviado a Google Sheets!' : 'Sin conexión: registro guardado en el dispositivo. Pulsa "Reenviar pendientes" cuando tengas internet.');
@@ -308,7 +416,9 @@
 
     function resetForm() {
       const currentHoja = document.getElementById('tablaDestino').value;
+      const currentSel = document.getElementById('hojaSelect').value;
       document.getElementById('dataForm').reset();
+      document.getElementById('hojaSelect').value = currentSel;
       document.getElementById('tablaDestino').value = currentHoja;
       imagesData = { img2: '', img3: '', img4: '' };
       ['img2', 'img3', 'img4'].forEach(id => {
