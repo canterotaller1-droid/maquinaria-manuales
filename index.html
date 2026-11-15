@@ -340,7 +340,7 @@
       document.getElementById('ocrTexto').value = '';
       ocrEstado('Preparando la foto…');
       try {
-        const canvas = await archivoACanvas(file, 2200);
+        const canvas = await archivoACanvas(file, 3200);
         document.getElementById('ocrImg').src = canvas.toDataURL('image/jpeg', 0.85);
         ocrEstado('Cargando el lector de texto (la primera vez tarda un poco y necesita internet)…');
         await cargarTesseract();
