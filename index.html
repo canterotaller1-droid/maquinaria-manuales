@@ -114,22 +114,25 @@
       <div class="form-group">
         <label>DESCRIPCION</label>
         <input type="text" id="descripcion">
+        <button type="button" class="btn btn-outline btn-sm btn-voz" data-campo="descripcion" onclick="toggleVoz('descripcion')" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
       </div>
 
       <div class="form-group">
         <label>OBSERVACIONES</label>
         <textarea id="observaciones"></textarea>
-        <button type="button" id="btnVoz" class="btn btn-outline btn-sm" onclick="toggleVoz()" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
+        <button type="button" class="btn btn-outline btn-sm btn-voz" data-campo="observaciones" onclick="toggleVoz('observaciones')" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
       </div>
 
       <div class="form-group">
         <label>PROGRAMA</label>
         <input type="text" id="programa">
+        <button type="button" class="btn btn-outline btn-sm btn-voz" data-campo="programa" onclick="toggleVoz('programa')" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
       </div>
 
       <div class="form-group">
         <label>HERRAMIENTA</label>
         <input type="text" id="herramienta">
+        <button type="button" class="btn btn-outline btn-sm btn-voz" data-campo="herramienta" onclick="toggleVoz('herramienta')" style="margin-top:0.5rem;">🎤 Dictar con la voz</button>
       </div>
     </div>
 
@@ -359,13 +362,16 @@
 
     let reconocimiento = null;
     let grabando = false;
+    let campoActivo = null;
     let textoBase = '';
 
     function pintarBotonVoz() {
-      const b = document.getElementById('btnVoz');
-      b.textContent = grabando ? '⏹️ Detener dictado' : '🎤 Dictar con la voz';
-      b.style.color = grabando ? '#dc2626' : '';
-      b.style.borderColor = grabando ? '#dc2626' : '';
+      document.querySelectorAll('.btn-voz').forEach(b => {
+        const activo = grabando && b.dataset.campo === campoActivo;
+        b.textContent = activo ? '⏹️ Detener dictado' : '🎤 Dictar con la voz';
+        b.style.color = activo ? '#dc2626' : '';
+        b.style.borderColor = activo ? '#dc2626' : '';
+      });
     }
 
     function detenerVoz() {
@@ -374,23 +380,33 @@
       pintarBotonVoz();
     }
 
-    function toggleVoz() {
-      if (grabando) { detenerVoz(); return; }
+    function toggleVoz(campoId) {
+      if (grabando && campoActivo === campoId) { detenerVoz(); return; }
+      if (grabando) {
+        // Estaba dictando en otro campo: se corta ese y se empieza en este
+        grabando = false;
+        if (reconocimiento) {
+          reconocimiento.onresult = reconocimiento.onerror = reconocimiento.onend = null;
+          try { reconocimiento.abort(); } catch (e) {}
+        }
+      }
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { alert('Este navegador no permite dictar por voz. Usa Chrome en el móvil.'); return; }
-      const ta = document.getElementById('observaciones');
+      const ta = document.getElementById(campoId);
       const sinFinal = s => s.replace(/\s+$/, '');
+      campoActivo = campoId;
       textoBase = ta.value ? sinFinal(ta.value) + ' ' : '';
-      reconocimiento = new SR();
-      reconocimiento.lang = 'es-ES';
-      reconocimiento.interimResults = true;
-      reconocimiento.continuous = false;
-      reconocimiento.onresult = (e) => {
+      const rec = new SR();
+      reconocimiento = rec;
+      rec.lang = 'es-ES';
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.onresult = (e) => {
         let t = '';
         for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
         ta.value = textoBase + t;
       };
-      reconocimiento.onerror = (e) => {
+      rec.onerror = (e) => {
         if (e.error === 'no-speech' || e.error === 'aborted') return;
         grabando = false;
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') alert('Permite el uso del micrófono para dictar (candado junto a la dirección → Permisos).');
@@ -398,16 +414,16 @@
         else alert('No se pudo dictar (' + e.error + ').');
         pintarBotonVoz();
       };
-      reconocimiento.onend = () => {
-        if (grabando) {
+      rec.onend = () => {
+        if (grabando && reconocimiento === rec) {
           textoBase = ta.value ? sinFinal(ta.value) + ' ' : '';
-          try { reconocimiento.start(); } catch (e) { grabando = false; }
+          try { rec.start(); } catch (e) { grabando = false; }
         }
         pintarBotonVoz();
       };
       grabando = true;
       pintarBotonVoz();
-      try { reconocimiento.start(); } catch (e) { grabando = false; pintarBotonVoz(); }
+      try { rec.start(); } catch (e) { grabando = false; pintarBotonVoz(); }
     }
 
     function addSent(n) {
