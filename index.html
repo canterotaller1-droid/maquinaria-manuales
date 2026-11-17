@@ -159,7 +159,11 @@
       </div>
     </div>
 
-    <button type="submit" class="btn btn-success" style="font-size: 1.1rem; padding: 1rem; margin-bottom: 1.5rem;">💾 GUARDAR REGISTRO</button>
+    <div id="avisoEdicion" style="display:none; font-size:0.85rem; color:#475569; background:#e0f2fe; border-radius:8px; padding:0.6rem 0.8rem; margin-bottom:0.75rem;">
+      Este registro ya está guardado. Puedes cambiar lo que quieras y pulsar <strong>Actualizar</strong>: se sustituye su fila. Para otra pieza distinta, pulsa <strong>Nueva captura</strong>.
+    </div>
+    <button type="submit" id="btnGuardar" class="btn btn-success" style="font-size: 1.1rem; padding: 1rem; margin-bottom: 0.75rem;">💾 GUARDAR REGISTRO</button>
+    <button type="button" class="btn btn-outline" style="width:100%; font-size: 1.05rem; padding: 0.9rem; margin-bottom: 1.5rem;" onclick="nuevaCaptura()">🆕 NUEVA CAPTURA</button>
   </form>
 
   <div class="card">
@@ -212,6 +216,8 @@
     let activeTargetInput = null;
     let records = JSON.parse(localStorage.getItem('app_records') || '[]');
     let imagesData = { img2: '', img3: '', img4: '' };
+    let idActual = null;        // id del registro que hay ahora en pantalla (si ya se envió/guardó)
+    let contadoActual = false;  // si ese registro ya se ha sumado al contador de enviados
 
     document.addEventListener("DOMContentLoaded", () => {
       document.getElementById('webhookUrl').value = localStorage.getItem('webhook_url') || '';
@@ -582,13 +588,17 @@
     }
 
     async function sendPending() {
-      let n = 0;
+      let n = 0, nuevos = 0;
       const quedan = [];
       for (const r of records) {
-        if (await sendRecord(r)) { n++; } else { quedan.push(r); }
+        if (await sendRecord(r)) {
+          n++;
+          if (!r.yaContado) nuevos++;
+          if (r.id === idActual) contadoActual = true;
+        } else { quedan.push(r); }
       }
       records = quedan;
-      addSent(n);
+      addSent(nuevos);
       persist(); renderRecords();
       alert(n + ' registro(s) enviado(s) a Google Sheets.' + (quedan.length ? '\nSin enviar todavía: ' + quedan.length : ''));
     }
@@ -615,20 +625,55 @@
         img4: imagesData.img4
       };
 
-      record.id = Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+      // Si se vuelve a guardar el mismo registro, conserva su id: Google sustituye la fila anterior
+      const eraReenvio = !!idActual;
+      record.id = idActual || (Date.now() + '-' + Math.random().toString(36).slice(2, 7));
+      idActual = record.id;
 
       const enviado = await sendRecord(record);
+      records = records.filter(x => x.id !== record.id);   // quita la versión anterior pendiente, si había
       if (enviado) {
-        addSent(1);            // ya enviado: no se guarda en el dispositivo
+        if (!contadoActual) { addSent(1); contadoActual = true; }   // ya enviado: no se guarda en el dispositivo
+        persist();
       } else {
+        record.yaContado = contadoActual;   // para no sumarlo dos veces al contador cuando se reenvíe
         records.push(record);  // sin conexión: se guarda para reenviarlo después
         persist();
       }
 
       recordarHoja(record.hojaDestino);
-      resetForm();
+      // El formulario se queda con los datos para poder modificarlos y volver a enviar
+      pintarModo();
       renderRecords();
-      alert(enviado ? '¡Registro enviado a Google Sheets!' : 'Sin conexión: registro guardado en el dispositivo. Pulsa "Reenviar pendientes" cuando tengas internet.');
+      alert(enviado
+        ? (eraReenvio ? '¡Registro actualizado! Se ha sustituido la fila en Google Sheets.' : '¡Registro enviado a Google Sheets!\n\nPuedes modificarlo y volver a guardar para sustituir la fila, o pulsar "Nueva captura" para empezar otro.')
+        : 'Sin conexión: registro guardado en el dispositivo. Pulsa "Reenviar pendientes" cuando tengas internet.');
+    }
+
+    function hayDatosEnFormulario() {
+      return ['codigo', 'cliente', 'articulo', 'descripcion', 'observaciones', 'programa', 'herramienta']
+        .some(id => document.getElementById(id).value.trim()) || !!(imagesData.img2 || imagesData.img3 || imagesData.img4);
+    }
+
+    function nuevaCaptura() {
+      detenerVoz();
+      if (!idActual && hayDatosEnFormulario() && !confirm('Hay datos sin guardar. ¿Borrarlos y empezar una captura nueva?')) return;
+      resetForm();
+      idActual = null;
+      contadoActual = false;
+      pintarModo();
+    }
+
+    function pintarModo() {
+      const b = document.getElementById('btnGuardar');
+      const aviso = document.getElementById('avisoEdicion');
+      if (idActual) {
+        b.textContent = '💾 ACTUALIZAR REGISTRO (sustituye la fila)';
+        aviso.style.display = 'block';
+      } else {
+        b.textContent = '💾 GUARDAR REGISTRO';
+        aviso.style.display = 'none';
+      }
     }
 
     function resetForm() {
