@@ -223,6 +223,7 @@
       document.getElementById('webhookUrl').value = localStorage.getItem('webhook_url') || '';
       renderRecords();
       cargarHojas(false);
+      restaurarBorrador();
     });
 
     function saveWebhookUrl(val) {
@@ -662,6 +663,7 @@
       idActual = null;
       contadoActual = false;
       pintarModo();
+      guardarBorrador();
     }
 
     function pintarModo() {
@@ -675,6 +677,53 @@
         aviso.style.display = 'none';
       }
     }
+
+    // ---- El formulario se conserva aunque se cierre la app ----
+    const CAMPOS_FORM = ['codigo', 'cliente', 'articulo', 'descripcion', 'observaciones', 'programa', 'herramienta'];
+    let borradorPrevio = '';
+
+    function guardarBorrador() {
+      let txt = '';
+      if (idActual || hayDatosEnFormulario()) {
+        const campos = {};
+        CAMPOS_FORM.forEach(id => { campos[id] = document.getElementById(id).value; });
+        txt = JSON.stringify({ campos, img: imagesData, idActual, contadoActual });
+      }
+      if (txt === borradorPrevio) return;
+      try {
+        if (txt) localStorage.setItem('borrador', txt); else localStorage.removeItem('borrador');
+        borradorPrevio = txt;
+      } catch (e) {
+        // Almacenamiento lleno: se intenta guardar al menos los textos, sin fotos
+        try {
+          const o = JSON.parse(txt); o.img = { img2: '', img3: '', img4: '' };
+          localStorage.setItem('borrador', JSON.stringify(o));
+        } catch (e2) { /* sin espacio */ }
+      }
+    }
+
+    function restaurarBorrador() {
+      let b = null;
+      try { b = JSON.parse(localStorage.getItem('borrador') || 'null'); } catch (e) {}
+      if (!b) return;
+      CAMPOS_FORM.forEach(id => { if (b.campos && b.campos[id] != null) document.getElementById(id).value = b.campos[id]; });
+      ['img2', 'img3', 'img4'].forEach(id => {
+        const d = b.img && b.img[id];
+        if (!d) return;
+        imagesData[id] = d;
+        const im = document.getElementById('prev_' + id);
+        im.src = d; im.style.display = 'block';
+        document.getElementById('label_' + id).style.display = 'none';
+      });
+      idActual = b.idActual || null;
+      contadoActual = !!b.contadoActual;
+      pintarModo();
+      borradorPrevio = localStorage.getItem('borrador') || '';
+    }
+
+    setInterval(guardarBorrador, 1500);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) guardarBorrador(); });
+    window.addEventListener('pagehide', guardarBorrador);
 
     function resetForm() {
       const currentHoja = document.getElementById('tablaDestino').value;
