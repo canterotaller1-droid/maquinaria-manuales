@@ -69,6 +69,8 @@
     </div>
   </details>
 
+  <button type="button" class="btn btn-outline" style="width:100%; margin-bottom: 1rem;" onclick="abrirBuscador()">🔎 Buscar y editar un registro ya enviado</button>
+
   <form id="dataForm" onsubmit="handleSave(event)">
     <div class="card" style="border-color: var(--primary); background: #f0f7ff;">
       <div class="card-title" style="color: var(--primary);">📄 Hoja de destino</div>
@@ -178,6 +180,20 @@
   <input type="file" id="scanPhoto" accept="image/*" capture="environment" style="display:none" onchange="onScanPhoto(this)">
   <div id="fileReader" style="display:none"></div>
 
+  <div id="buscadorModal" class="modal" style="align-items:flex-start; overflow:auto;">
+    <div class="modal-content" style="margin:auto;">
+      <div style="font-weight:600; margin-bottom:0.5rem;">🔎 Buscar un registro ya enviado</div>
+      <label style="font-size:0.85rem;">Hoja:</label>
+      <select id="busHoja" style="width:100%; margin-bottom:0.5rem;"></select>
+      <label style="font-size:0.85rem;">Texto (código, cliente, artículo, pieza, observaciones…):</label>
+      <input type="text" id="busTexto" placeholder="Déjalo vacío para ver los últimos de la hoja" style="width:100%;" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarRegistros();}">
+      <button type="button" class="btn btn-primary" style="width:100%; margin-top:0.6rem;" onclick="buscarRegistros()">Buscar</button>
+      <div id="busEstado" style="font-size:0.85rem; color:#475569; margin:0.5rem 0;"></div>
+      <div id="busResultados" style="max-height:45vh; overflow:auto;"></div>
+      <button type="button" class="btn btn-outline" style="width:100%; margin-top:0.6rem;" onclick="cerrarBuscador()">Cerrar</button>
+    </div>
+  </div>
+
   <input type="file" id="scanPhotoOcr" accept="image/*" capture="environment" style="display:none" onchange="onOcrPhoto(this)">
 
   <div id="ocrModal" class="modal" style="align-items:flex-start; overflow:auto;">
@@ -217,6 +233,9 @@
     let records = JSON.parse(localStorage.getItem('app_records') || '[]');
     let imagesData = { img2: '', img3: '', img4: '' };
     let idActual = null;        // id del registro que hay ahora en pantalla (si ya se envió/guardó)
+    let fotosGuardadas = { img2: '', img3: '', img4: '' };   // enlaces de fotos que ya tiene el registro cargado
+    let mantener = { img2: false, img3: false, img4: false };  // true = se conserva la foto guardada
+    let fechaOriginal = '';     // fecha del registro cargado para editar (se conserva)
     let contadoActual = false;  // si ese registro ya se ha sumado al contador de enviados
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -437,6 +456,7 @@
       if (input.files && input.files[0]) {
         compressImage(input.files[0], 1000, 0.7).then(dataUrl => {
           imagesData[id] = dataUrl;
+          mantener[id] = false;
           const img = document.getElementById('prev_' + id);
           img.src = dataUrl;
           img.style.display = 'block';
@@ -612,7 +632,7 @@
         return;
       }
       const record = {
-        timestamp: new Date().toLocaleString(),
+        timestamp: fechaOriginal || new Date().toLocaleString(),
         hojaDestino: document.getElementById('tablaDestino').value.trim() || 'Hoja1',
         codigo: document.getElementById('codigo').value,
         cliente: document.getElementById('cliente').value,
@@ -623,7 +643,12 @@
         herramienta: document.getElementById('herramienta').value,
         img2: imagesData.img2,
         img3: imagesData.img3,
-        img4: imagesData.img4
+        img4: imagesData.img4,
+        mantenerFotos: {
+          img2: !!(mantener.img2 && !imagesData.img2),
+          img3: !!(mantener.img3 && !imagesData.img3),
+          img4: !!(mantener.img4 && !imagesData.img4)
+        }
       };
 
       // Si se vuelve a guardar el mismo registro, conserva su id: Google sustituye la fila anterior
@@ -687,7 +712,7 @@
       if (idActual || hayDatosEnFormulario()) {
         const campos = {};
         CAMPOS_FORM.forEach(id => { campos[id] = document.getElementById(id).value; });
-        txt = JSON.stringify({ campos, img: imagesData, idActual, contadoActual });
+        txt = JSON.stringify({ campos, img: imagesData, idActual, contadoActual, fotosGuardadas, mantener, fechaOriginal });
       }
       if (txt === borradorPrevio) return;
       try {
@@ -715,6 +740,10 @@
         im.src = d; im.style.display = 'block';
         document.getElementById('label_' + id).style.display = 'none';
       });
+      fechaOriginal = b.fechaOriginal || '';
+      ['img2', 'img3', 'img4'].forEach(id => {
+        if (b.fotosGuardadas && b.fotosGuardadas[id] && b.mantener && b.mantener[id] && !imagesData[id]) mostrarFotoGuardada(id, b.fotosGuardadas[id]);
+      });
       idActual = b.idActual || null;
       contadoActual = !!b.contadoActual;
       pintarModo();
@@ -725,6 +754,96 @@
     document.addEventListener('visibilitychange', () => { if (document.hidden) guardarBorrador(); });
     window.addEventListener('pagehide', guardarBorrador);
 
+    // ---- Buscar y editar un registro que ya está en Google Sheets ----
+    function mostrarFotoGuardada(id, url) {
+      fotosGuardadas[id] = url; mantener[id] = true;
+      const im = document.getElementById('prev_' + id);
+      const lb = document.getElementById('label_' + id);
+      const m = url.match(/\/d\/([-\w]{25,})/) || url.match(/[?&]id=([-\w]{25,})/);
+      if (m) {
+        im.onerror = () => { im.style.display = 'none'; lb.style.display = 'block'; lb.textContent = '📎 Foto guardada'; };
+        im.src = 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w600';
+        im.style.display = 'block'; lb.style.display = 'none';
+      } else {
+        im.style.display = 'none'; lb.style.display = 'block'; lb.textContent = '📎 Foto guardada';
+      }
+    }
+
+    async function llamarServicio(params) {
+      const url = localStorage.getItem('webhook_url');
+      if (!url) throw new Error('Primero pega la dirección del servicio de Google en Configuración.');
+      const q = Object.keys(params).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+      const r = await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + q, { cache: 'no-store' });
+      return r.json();
+    }
+
+    function abrirBuscador() {
+      const sel = document.getElementById('busHoja');
+      const actual = localStorage.getItem('hoja_actual') || '';
+      sel.innerHTML = '';
+      const todas = document.createElement('option'); todas.value = '*'; todas.textContent = 'Todas las hojas'; sel.appendChild(todas);
+      leerHojas().forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+      if (actual && leerHojas().indexOf(actual) >= 0) sel.value = actual;
+      document.getElementById('busEstado').textContent = '';
+      document.getElementById('busResultados').innerHTML = '';
+      document.getElementById('buscadorModal').style.display = 'flex';
+      document.getElementById('busTexto').focus();
+    }
+
+    function cerrarBuscador() { document.getElementById('buscadorModal').style.display = 'none'; }
+
+    async function buscarRegistros() {
+      const est = document.getElementById('busEstado');
+      const lista = document.getElementById('busResultados');
+      lista.innerHTML = '';
+      est.textContent = 'Buscando…';
+      try {
+        const j = await llamarServicio({ accion: 'buscar', hoja: document.getElementById('busHoja').value, q: document.getElementById('busTexto').value.trim() });
+        if (!j || !j.ok) { est.textContent = (j && j.error) || 'No se pudo buscar.'; return; }
+        est.textContent = j.resultados.length ? 'Toca el registro que quieres editar (' + j.resultados.length + ', los más recientes primero):' : 'No se ha encontrado nada.';
+        j.resultados.forEach(r => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'btn btn-outline';
+          b.style.cssText = 'width:100%; text-align:left; margin-bottom:0.4rem; display:block; white-space:normal;';
+          const l1 = document.createElement('div'); l1.style.fontWeight = '600';
+          l1.textContent = (r.codigo || '(sin código)') + (r.pieza ? ' · ' + r.pieza : '');
+          const l2 = document.createElement('div'); l2.style.cssText = 'font-size:0.8rem; color:#64748b;';
+          l2.textContent = [r.hoja, r.cliente, r.articulo, r.fecha].filter(Boolean).join(' · ');
+          b.appendChild(l1); b.appendChild(l2);
+          b.onclick = () => abrirRegistro(r);
+          lista.appendChild(b);
+        });
+      } catch (e) {
+        est.textContent = 'No se pudo buscar: ' + (e && e.message ? e.message : e) + ' (¿hay conexión a internet?)';
+      }
+    }
+
+    async function abrirRegistro(r) {
+      if (!idActual && hayDatosEnFormulario() && !confirm('Hay datos sin guardar en el formulario. ¿Sustituirlos por este registro?')) return;
+      const est = document.getElementById('busEstado');
+      est.textContent = 'Cargando el registro…';
+      try {
+        const j = await llamarServicio({ accion: 'abrir', hoja: r.hoja, fila: r.fila, codigo: r.codigo, id: r.id || '' });
+        if (!j || !j.ok) { est.textContent = (j && j.error) || 'No se pudo abrir el registro.'; return; }
+        const g = j.registro;
+        detenerVoz();
+        resetForm();
+        CAMPOS_FORM.forEach(id => { document.getElementById(id).value = g[id] || ''; });
+        recordarHoja(g.hoja);
+        ['img2', 'img3', 'img4'].forEach(id => { if (g.fotos && g.fotos[id]) mostrarFotoGuardada(id, g.fotos[id]); });
+        idActual = g.id;
+        contadoActual = true;
+        fechaOriginal = g.fecha || '';
+        records = records.filter(x => x.id !== g.id);
+        pintarModo();
+        guardarBorrador();
+        cerrarBuscador();
+        alert('Registro cargado. Cambia lo que quieras y pulsa "ACTUALIZAR REGISTRO": se sustituirá su fila en Google Sheets.');
+      } catch (e) {
+        est.textContent = 'No se pudo abrir: ' + (e && e.message ? e.message : e);
+      }
+    }
+
     function resetForm() {
       const currentHoja = document.getElementById('tablaDestino').value;
       const currentSel = document.getElementById('hojaSelect').value;
@@ -732,9 +851,13 @@
       document.getElementById('hojaSelect').value = currentSel;
       document.getElementById('tablaDestino').value = currentHoja;
       imagesData = { img2: '', img3: '', img4: '' };
+      fotosGuardadas = { img2: '', img3: '', img4: '' };
+      mantener = { img2: false, img3: false, img4: false };
+      fechaOriginal = '';
       ['img2', 'img3', 'img4'].forEach(id => {
         document.getElementById('prev_' + id).style.display = 'none';
         document.getElementById('label_' + id).style.display = 'block';
+        document.getElementById('label_' + id).textContent = id.toUpperCase();
       });
     }
 
